@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ujasusi VIRAL_OPS — Intelligence Content Amplification System</title>
-  <meta name="description" content="Transform Ujasusi Blog intelligence analysis into viral social media posts." />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -16,6 +15,7 @@
     body { background: #050a05; font-family: 'Courier New', monospace; color: #c8ffc8; }
     @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     .fade-in { animation: fadeIn 0.5s ease; }
     .pulsing { animation: pulse 1s infinite; }
   </style>
@@ -26,40 +26,75 @@
     const { useState, useEffect } = React;
 
     const PLATFORMS = [
-      { id:"twitter",  label:"X / Twitter Thread",  icon:"𝕏", color:"#00ff9d", desc:"Multi-post thread optimised for virality" },
-      { id:"linkedin", label:"LinkedIn Post",        icon:"in", color:"#4fc3f7", desc:"Professional long-form for security analysts" },
-      { id:"substack", label:"Substack Note",        icon:"S",  color:"#ff8c42", desc:"Short note to drive newsletter opens" },
-      { id:"whatsapp", label:"WhatsApp Broadcast",   icon:"W",  color:"#a8d8a8", desc:"Bilingual English/Swahili broadcast" },
+      { id:"twitter",  label:"X / Twitter Thread", icon:"X", color:"#00ff9d", desc:"Multi-post thread optimised for virality" },
+      { id:"linkedin", label:"LinkedIn Post",       icon:"in", color:"#4fc3f7", desc:"Professional long-form for security analysts" },
+      { id:"substack", label:"Substack Note",       icon:"S",  color:"#ff8c42", desc:"Short note to drive newsletter opens" },
+      { id:"whatsapp", label:"WhatsApp Broadcast",  icon:"W",  color:"#a8d8a8", desc:"Bilingual English/Swahili broadcast" },
     ];
 
-    const SYSTEM_PROMPT = `You are a social media strategist for Ujasusi Blog, an intelligence analysis newsletter on African security affairs run by a former Tanzania Intelligence and Security Service (TISS) officer. Be concise — total JSON response must be under 1500 tokens.
+    const PROMPTS = {
+      twitter: `You are a social media strategist for Ujasusi Blog, an African intelligence analysis newsletter run by a former TISS officer. Write an X/Twitter thread. Format exactly:
+Tweet 1 (hook, max 220 chars, strong intelligence angle, emoji)
+---
+2/ Second tweet (key fact, max 220 chars)
+---
+3/ Third tweet (key point, max 220 chars)
+---
+4/ Fourth tweet (key point, max 220 chars)
+---
+5/ Final tweet (subscribe CTA to Ujasusi Blog, max 220 chars)
 
-Generate four platform posts. Rules:
-- twitter: Hook tweet + 3 follow-up tweets (2/ 3/ 4/) + subscribe CTA. Each tweet max 220 chars. Separate with ---
-- linkedin: 2 short paragraphs + 3 bullet takeaways + 1 closing question + hashtags. Max 200 words.
-- substack: 2 sentences only. Curiosity gap. End with "Read the full brief →"
-- whatsapp: 3 lines English then 3 lines Swahili. Emojis. Max 100 words total.
+Use emojis. Name agencies, countries, operations. Add #Ujasusi #AfricanIntelligence #Tanzania #OSINT where natural.
+Return only the tweets separated by --- with no other text.`,
 
-Lead with intelligence angle. Use specific agency names, countries, operations from the article. Hashtags: #Ujasusi #AfricanIntelligence #Tanzania #OSINT
+      linkedin: `You are a social media strategist for Ujasusi Blog, an African intelligence analysis newsletter run by a former TISS officer. Write a LinkedIn post. Format:
+- One bold opening statement
+- Two short analytical paragraphs
+- Three bullet takeaways starting with a arrow symbol
+- One closing question
+- Three hashtags
 
-Return ONLY this JSON with no extra text or markdown:
-{"twitter":"t1---t2---t3---t4","linkedin":"text","substack":"text","whatsapp":"text","suggested_hashtags":["tag1","tag2","tag3"],"viral_score":82,"hook_analysis":"one sentence"}`;
+Max 220 words. Direct professional tone. Name specific agencies, countries, operations from the article.
+Return only the post text.`,
 
-    // Attempt to repair truncated JSON by closing open strings/objects
-    function repairJSON(str) {
-      let s = str.replace(/```json|```/g, "").trim();
-      // If it ends mid-string, close the string then close remaining braces
-      const openBraces = (s.match(/{/g)||[]).length - (s.match(/}/g)||[]).length;
-      const openBrackets = (s.match(/\[/g)||[]).length - (s.match(/\]/g)||[]).length;
-      // Find last complete key-value pair and truncate there
-      const lastComma = s.lastIndexOf(",");
-      const lastBrace = s.lastIndexOf("}");
-      if (lastComma > lastBrace) {
-        s = s.substring(0, lastComma);
-      }
-      for (let i = 0; i < openBrackets; i++) s += "]";
-      for (let i = 0; i < openBraces; i++) s += "}";
-      return s;
+      substack: `You are a social media strategist for Ujasusi Blog, an African intelligence analysis newsletter run by a former TISS officer. Write a Substack Note. Rules:
+- Exactly 2 sentences
+- Strong curiosity gap — tease the key intelligence finding without revealing it
+- Last words must be: Read the full brief
+- Max 60 words
+
+Return only the note text.`,
+
+      whatsapp: `You are a social media strategist for Ujasusi Blog, an African intelligence analysis newsletter run by a former TISS officer. Write a WhatsApp broadcast message. Format:
+Line 1-3: English (punchy, emoji, max 3 lines)
+[blank line]
+Line 4-6: Swahili translation (natural, emoji, max 3 lines)
+Final line: Read more at ujasusiblog.com
+
+Max 100 words. Return only the message.`,
+    };
+
+    async function callClaude(apiKey, systemPrompt, articleTitle, articleContent) {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 500,
+          messages: [{
+            role: "user",
+            content: systemPrompt + "\n\n---\nARTICLE TITLE: " + articleTitle + "\n\nARTICLE:\n" + articleContent.slice(0, 2500)
+          }],
+        }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || "HTTP " + res.status); }
+      const data = await res.json();
+      return data.content?.find(b => b.type === "text")?.text?.trim() || "";
     }
 
     function App() {
@@ -68,11 +103,13 @@ Return ONLY this JSON with no extra text or markdown:
       const [keyOk, setKeyOk]           = useState(() => !!sessionStorage.getItem("uj_key"));
       const [title, setTitle]           = useState("");
       const [content, setContent]       = useState("");
-      const [loading, setLoading]       = useState(false);
-      const [results, setResults]       = useState(null);
+      const [results, setResults]       = useState({twitter:"", linkedin:"", substack:"", whatsapp:""});
+      const [progress, setProgress]     = useState({twitter:"idle", linkedin:"idle", substack:"idle", whatsapp:"idle"});
       const [activePlatform, setActive] = useState("twitter");
       const [copied, setCopied]         = useState(false);
-      const [error, setError]           = useState(null);
+      const [keyError, setKeyError]     = useState(null);
+      const [genError, setGenError]     = useState(null);
+      const [running, setRunning]       = useState(false);
       const [scanLine, setScanLine]     = useState(0);
       const [glitch, setGlitch]         = useState(false);
 
@@ -82,208 +119,160 @@ Return ONLY this JSON with no extra text or markdown:
       }, []);
 
       useEffect(() => {
-        if (!loading) return;
+        if (!running) return;
         const t = setInterval(() => { setGlitch(true); setTimeout(()=>setGlitch(false),100); }, 2000);
         return () => clearInterval(t);
-      }, [loading]);
+      }, [running]);
 
       const confirmKey = () => {
         if (apiKey.startsWith("sk-ant-")) {
           sessionStorage.setItem("uj_key", apiKey);
-          setKeyOk(true); setError(null);
+          setKeyOk(true); setKeyError(null);
         } else {
-          setError("Invalid key. Anthropic keys start with sk-ant-");
+          setKeyError("Invalid key. Anthropic keys start with sk-ant-");
         }
       };
 
       const generate = async () => {
         if (!content.trim() || !apiKey) return;
-        setLoading(true); setError(null); setResults(null);
-        try {
-          const res = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
-              "anthropic-dangerous-direct-browser-access": "true",
-            },
-            body: JSON.stringify({
-              model: "claude-haiku-4-5-20251001",
-              max_tokens: 2000,
-              system: SYSTEM_PROMPT,
-              messages: [{ role:"user", content:`TITLE: ${title||"Untitled"}\n\nCONTENT:\n${content.slice(0,3000)}\n\nGenerate posts for all four platforms now.` }],
-            }),
-          });
-          if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message||`HTTP ${res.status}`); }
-          const data = await res.json();
-          const raw = data.content?.find(b=>b.type==="text")?.text||"";
-          let parsed;
-          try {
-            parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
-          } catch(e1) {
-            // Try to repair truncated JSON
+        setRunning(true); setGenError(null);
+        setResults({twitter:"", linkedin:"", substack:"", whatsapp:""});
+        setProgress({twitter:"loading", linkedin:"loading", substack:"loading", whatsapp:"loading"});
+
+        await Promise.allSettled(
+          PLATFORMS.map(async (p) => {
             try {
-              parsed = JSON.parse(repairJSON(raw));
-            } catch(e2) {
-              throw new Error("Response parsing failed. Try with shorter article content.");
+              const text = await callClaude(apiKey, PROMPTS[p.id], title, content);
+              setResults(prev => ({...prev, [p.id]: text}));
+              setProgress(prev => ({...prev, [p.id]: "done"}));
+            } catch(e) {
+              setProgress(prev => ({...prev, [p.id]: "error"}));
+              setGenError("Error on " + p.label + ": " + e.message);
             }
-          }
-          setResults(parsed); setActive("twitter");
-        } catch(e) {
-          setError("SIGNAL LOST — " + e.message);
-        } finally { setLoading(false); }
+          })
+        );
+
+        setRunning(false);
+        setActive("twitter");
       };
 
       const getContent = () => {
-        if (!results) return "";
-        const raw = results[activePlatform]||"";
-        return activePlatform==="twitter" ? raw.split("---").join("\n\n─────────────────\n\n") : raw;
+        const raw = results[activePlatform] || "";
+        if (activePlatform === "twitter") {
+          return raw.split("---").map(t => t.trim()).filter(Boolean).join("\n\n" + "─".repeat(32) + "\n\n");
+        }
+        return raw;
       };
 
       const copy = () => {
-        const raw = results?.[activePlatform]||"";
-        navigator.clipboard.writeText(activePlatform==="twitter" ? raw.split("---").join("\n\n") : raw);
-        setCopied(true); setTimeout(()=>setCopied(false),2000);
+        navigator.clipboard.writeText(results[activePlatform] || "");
+        setCopied(true); setTimeout(() => setCopied(false), 2000);
       };
 
-      const ap = PLATFORMS.find(p=>p.id===activePlatform);
+      const ap = PLATFORMS.find(p => p.id === activePlatform);
+      const anyDone = Object.values(progress).some(s => s === "done" || s === "error");
       const inp = { width:"100%", background:"rgba(0,30,0,0.8)", border:"1px solid #1a4a1a", color:"#c8ffc8", padding:"10px 12px", fontFamily:"'Courier New',monospace", fontSize:13, outline:"none" };
 
+      const StatusDot = ({s}) => {
+        if (s === "idle")    return React.createElement("span", {style:{color:"#1a3a1a"}}, "○");
+        if (s === "loading") return React.createElement("span", {style:{color:"#ff8c42", display:"inline-block", animation:"spin 1s linear infinite"}}, "◌");
+        if (s === "done")    return React.createElement("span", {style:{color:"#00ff9d"}}, "✓");
+        if (s === "error")   return React.createElement("span", {style:{color:"#ff4444"}}, "✗");
+      };
+
       return (
-        <div style={{minHeight:"100vh",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:50,background:`linear-gradient(transparent ${scanLine}%, rgba(0,255,80,0.015) ${scanLine+1}%, transparent ${scanLine+2}%)`}}/>
-          <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:0,backgroundImage:"linear-gradient(rgba(0,255,80,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,80,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px"}}/>
+        React.createElement("div", {style:{minHeight:"100vh",position:"relative",overflow:"hidden"}},
+          React.createElement("div", {style:{position:"fixed",inset:0,pointerEvents:"none",zIndex:50,background:`linear-gradient(transparent ${scanLine}%, rgba(0,255,80,0.015) ${scanLine+1}%, transparent ${scanLine+2}%)`}}),
+          React.createElement("div", {style:{position:"fixed",inset:0,pointerEvents:"none",zIndex:0,backgroundImage:"linear-gradient(rgba(0,255,80,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,80,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px"}}),
 
-          <div style={{position:"relative",zIndex:10,maxWidth:900,margin:"0 auto",padding:"24px 20px"}}>
+          React.createElement("div", {style:{position:"relative",zIndex:10,maxWidth:900,margin:"0 auto",padding:"24px 20px"}},
 
-            {/* Header */}
-            <div style={{textAlign:"center",marginBottom:36}}>
-              <div style={{display:"inline-block",border:"1px solid #00ff9d",padding:"4px 16px",fontSize:10,letterSpacing:4,color:"#00ff9d",marginBottom:12}}>
-                ▸ CLASSIFIED SYSTEM ◂ UJASUSI INTEL OPS ▸ ACTIVE
-              </div>
-              <div style={{fontSize:28,fontWeight:700,letterSpacing:2,color:"#fff",textShadow:glitch?"3px 0 #f00, -3px 0 #0ff":"0 0 20px rgba(0,255,80,0.4)"}}>
-                UJASUSI<span style={{color:"#00ff9d"}}>:</span>VIRAL_OPS
-              </div>
-              <div style={{fontSize:11,color:"#4a7c4a",letterSpacing:3,marginTop:4}}>
-                INTELLIGENCE CONTENT AMPLIFICATION SYSTEM v2.1
-              </div>
-            </div>
+            // Header
+            React.createElement("div", {style:{textAlign:"center",marginBottom:36}},
+              React.createElement("div", {style:{display:"inline-block",border:"1px solid #00ff9d",padding:"4px 16px",fontSize:10,letterSpacing:4,color:"#00ff9d",marginBottom:12}}, "▸ CLASSIFIED SYSTEM ◂ UJASUSI INTEL OPS ▸ ACTIVE"),
+              React.createElement("div", {style:{fontSize:28,fontWeight:700,letterSpacing:2,color:"#fff",textShadow:glitch?"3px 0 #f00, -3px 0 #0ff":"0 0 20px rgba(0,255,80,0.4)"}},
+                "UJASUSI", React.createElement("span",{style:{color:"#00ff9d"}},":"), "VIRAL_OPS"),
+              React.createElement("div", {style:{fontSize:11,color:"#4a7c4a",letterSpacing:3,marginTop:4}}, "INTELLIGENCE CONTENT AMPLIFICATION SYSTEM v3.0")
+            ),
 
-            {/* API Key */}
-            <div style={{border:`1px solid ${keyOk?"#1a3a1a":"#4a2a00"}`,background:"rgba(0,20,0,0.6)",padding:20,marginBottom:20,position:"relative"}}>
-              <div style={{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:10,color:keyOk?"#00ff9d":"#ff8c42",letterSpacing:2}}>
-                ▸ {keyOk?"API AUTHORISATION — ACTIVE ✓":"API AUTHORISATION REQUIRED"}
-              </div>
-              {!keyOk ? (
-                <div>
-                  <div style={{fontSize:11,color:"#a8a860",lineHeight:1.7,marginBottom:12}}>
-                    Enter your Anthropic API key. Stored only in this browser session — never logged anywhere.<br/>
-                    <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style={{color:"#ff8c42",textDecoration:"none"}}>→ Get your free API key at console.anthropic.com</a>
-                  </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <input type={showKey?"text":"password"} value={apiKey} onChange={e=>setApiKey(e.target.value)} onKeyDown={e=>e.key==="Enter"&&confirmKey()} placeholder="sk-ant-api03-..." style={{...inp,flex:1}}/>
-                    <button onClick={()=>setShowKey(!showKey)} style={{padding:"10px 14px",background:"transparent",border:"1px solid #1a4a1a",color:"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,cursor:"pointer"}}>{showKey?"HIDE":"SHOW"}</button>
-                    <button onClick={confirmKey} style={{padding:"10px 20px",background:"rgba(255,140,66,0.1)",border:"1px solid #ff8c42",color:"#ff8c42",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:2,cursor:"pointer"}}>AUTHORISE</button>
-                  </div>
-                  {error&&<div style={{color:"#ff4444",fontSize:11,marginTop:8}}>⚠ {error}</div>}
-                </div>
-              ) : (
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <div style={{fontSize:11,color:"#4a7c4a"}}>Key loaded: {apiKey.slice(0,14)}••••••••••••</div>
-                  <button onClick={()=>{setKeyOk(false);sessionStorage.removeItem("uj_key");}} style={{padding:"6px 14px",background:"transparent",border:"1px solid #1a3a1a",color:"#2a5a2a",fontFamily:"'Courier New',monospace",fontSize:10,cursor:"pointer"}}>CHANGE KEY</button>
-                </div>
-              )}
-            </div>
+            // API Key Panel
+            React.createElement("div", {style:{border:`1px solid ${keyOk?"#1a3a1a":"#4a2a00"}`,background:"rgba(0,20,0,0.6)",padding:20,marginBottom:20,position:"relative"}},
+              React.createElement("div", {style:{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:10,color:keyOk?"#00ff9d":"#ff8c42",letterSpacing:2}},
+                "▸ " + (keyOk ? "API AUTHORISATION — ACTIVE ✓" : "API AUTHORISATION REQUIRED")),
+              !keyOk ? React.createElement("div", null,
+                React.createElement("div", {style:{fontSize:11,color:"#a8a860",lineHeight:1.7,marginBottom:12}},
+                  "Enter your Anthropic API key. Stored in this browser session only — never logged anywhere.",
+                  React.createElement("br"),
+                  React.createElement("a", {href:"https://console.anthropic.com/settings/keys",target:"_blank",rel:"noopener noreferrer",style:{color:"#ff8c42",textDecoration:"none"}}, "→ Get your free API key at console.anthropic.com")),
+                React.createElement("div", {style:{display:"flex",gap:8}},
+                  React.createElement("input", {type:showKey?"text":"password",value:apiKey,onChange:e=>setApiKey(e.target.value),onKeyDown:e=>e.key==="Enter"&&confirmKey(),placeholder:"sk-ant-api03-...",style:{...inp,flex:1}}),
+                  React.createElement("button", {onClick:()=>setShowKey(!showKey),style:{padding:"10px 14px",background:"transparent",border:"1px solid #1a4a1a",color:"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,cursor:"pointer"}}, showKey?"HIDE":"SHOW"),
+                  React.createElement("button", {onClick:confirmKey,style:{padding:"10px 20px",background:"rgba(255,140,66,0.1)",border:"1px solid #ff8c42",color:"#ff8c42",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:2,cursor:"pointer"}}, "AUTHORISE")),
+                keyError && React.createElement("div", {style:{color:"#ff4444",fontSize:11,marginTop:8}}, "⚠ " + keyError)
+              ) : React.createElement("div", {style:{display:"flex",alignItems:"center",justifyContent:"space-between"}},
+                React.createElement("div", {style:{fontSize:11,color:"#4a7c4a"}}, "Key loaded: " + apiKey.slice(0,14) + "••••••••••••"),
+                React.createElement("button", {onClick:()=>{setKeyOk(false);sessionStorage.removeItem("uj_key");},style:{padding:"6px 14px",background:"transparent",border:"1px solid #1a3a1a",color:"#2a5a2a",fontFamily:"'Courier New',monospace",fontSize:10,cursor:"pointer"}}, "CHANGE KEY"))
+            ),
 
-            {/* Input */}
-            <div style={{border:"1px solid #1a3a1a",background:"rgba(0,20,0,0.6)",padding:24,marginBottom:20,position:"relative"}}>
-              <div style={{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:10,color:"#00ff9d",letterSpacing:2}}>▸ INTELLIGENCE INPUT</div>
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}>ARTICLE TITLE:</div>
-                <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Tanzania TISS Conducts Covert Operations Against Opposition..." style={inp}/>
-              </div>
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}>ARTICLE CONTENT <span style={{color:"#2a5a2a"}}>(first 3,000 chars used)</span>:</div>
-                <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Paste your Ujasusi Blog article here. Include agency names, operations, countries, and analytical conclusions..." rows={8} style={{...inp,resize:"vertical",lineHeight:1.6}}/>
-                <div style={{fontSize:10,color:content.length>3000?"#ff8c42":"#2a5a2a",marginTop:4,textAlign:"right"}}>{content.length} chars {content.length>3000&&"— will be trimmed to 3,000"}</div>
-              </div>
-              <button onClick={generate} disabled={loading||!content.trim()||!keyOk} style={{width:"100%",padding:"14px",background:loading?"transparent":"rgba(0,255,80,0.1)",border:`1px solid ${loading||!keyOk?"#1a4a1a":"#00ff9d"}`,color:loading||!keyOk?"#2a6a2a":"#00ff9d",fontFamily:"'Courier New',monospace",fontSize:13,letterSpacing:3,cursor:loading||!keyOk?"not-allowed":"pointer",textTransform:"uppercase"}}>
-                <span className={loading?"pulsing":""}>{loading?"▸ PROCESSING INTELLIGENCE...":!keyOk?"▸ AUTHORISE API KEY FIRST":"▸ GENERATE VIRAL POSTS"}</span>
-              </button>
-              {error&&keyOk&&<div style={{marginTop:12,padding:"10px 12px",border:"1px solid #4a0000",color:"#ff4444",fontSize:11}}>⚠ {error}</div>}
-            </div>
+            // Input Panel
+            React.createElement("div", {style:{border:"1px solid #1a3a1a",background:"rgba(0,20,0,0.6)",padding:24,marginBottom:20,position:"relative"}},
+              React.createElement("div", {style:{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:10,color:"#00ff9d",letterSpacing:2}}, "▸ INTELLIGENCE INPUT"),
+              React.createElement("div", {style:{marginBottom:16}},
+                React.createElement("div", {style:{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}, "ARTICLE TITLE:"),
+                React.createElement("input", {value:title,onChange:e=>setTitle(e.target.value),placeholder:"e.g. Tanzania TISS: Mandate, Failure, and the Repression Paradox",style:inp})),
+              React.createElement("div", {style:{marginBottom:16}},
+                React.createElement("div", {style:{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}},
+                  "ARTICLE CONTENT ", React.createElement("span",{style:{color:"#2a5a2a"}}, "(first 2,500 chars used)"), ":"),
+                React.createElement("textarea", {value:content,onChange:e=>setContent(e.target.value),placeholder:"Paste your Ujasusi Blog article here...",rows:8,style:{...inp,resize:"vertical",lineHeight:1.6}}),
+                React.createElement("div", {style:{fontSize:10,color:content.length>2500?"#ff8c42":"#2a5a2a",marginTop:4,textAlign:"right"}},
+                  content.length + " chars" + (content.length>2500?" — trimmed to 2,500":""))),
+              React.createElement("button", {onClick:generate,disabled:running||!content.trim()||!keyOk,style:{width:"100%",padding:"14px",background:running?"transparent":"rgba(0,255,80,0.1)",border:`1px solid ${running||!keyOk?"#1a4a1a":"#00ff9d"}`,color:running||!keyOk?"#2a6a2a":"#00ff9d",fontFamily:"'Courier New',monospace",fontSize:13,letterSpacing:3,cursor:running||!keyOk?"not-allowed":"pointer",textTransform:"uppercase"}},
+                React.createElement("span", {className:running?"pulsing":""}, running?"▸ GENERATING ALL PLATFORMS IN PARALLEL...":!keyOk?"▸ AUTHORISE API KEY FIRST":"▸ GENERATE VIRAL POSTS")),
+              genError && React.createElement("div", {style:{marginTop:12,padding:"10px 12px",border:"1px solid #4a0000",color:"#ff4444",fontSize:11}}, "⚠ " + genError)
+            ),
 
-            {/* Results */}
-            {results&&(
-              <div className="fade-in">
-                <div style={{border:"1px solid #1a3a1a",background:"rgba(0,20,0,0.6)",padding:"16px 20px",marginBottom:16,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
-                  <div>
-                    <div style={{fontSize:9,color:"#4a7c4a",letterSpacing:2,marginBottom:4}}>VIRAL POTENTIAL SCORE</div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{width:160,height:6,background:"#0a1a0a",border:"1px solid #1a3a1a",borderRadius:3}}>
-                        <div style={{width:`${results.viral_score||75}%`,height:"100%",background:results.viral_score>75?"#00ff9d":results.viral_score>50?"#ff8c42":"#ff4444",borderRadius:3,transition:"width 1s ease"}}/>
-                      </div>
-                      <span style={{color:"#00ff9d",fontSize:18,fontWeight:700}}>{results.viral_score||"—"}</span>
-                    </div>
-                  </div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:9,color:"#4a7c4a",letterSpacing:2,marginBottom:4}}>SIGNAL ANALYSIS</div>
-                    <div style={{fontSize:12,color:"#a8e6a8",lineHeight:1.4}}>{results.hook_analysis||"Analysis unavailable"}</div>
-                  </div>
-                  {results.suggested_hashtags?.length>0&&(
-                    <div>
-                      <div style={{fontSize:9,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}>TOP HASHTAGS</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                        {results.suggested_hashtags.slice(0,5).map(t=>(
-                          <span key={t} style={{background:"rgba(0,255,80,0.08)",border:"1px solid #1a4a1a",padding:"2px 8px",fontSize:10,color:"#6aaa6a"}}>#{t.replace("#","")}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+            // Progress
+            (running || anyDone) && React.createElement("div", {style:{border:"1px solid #1a3a1a",background:"rgba(0,20,0,0.6)",padding:"14px 20px",marginBottom:16,display:"flex",gap:24,flexWrap:"wrap"}},
+              PLATFORMS.map(p => React.createElement("div", {key:p.id,style:{display:"flex",alignItems:"center",gap:8}},
+                React.createElement(StatusDot, {s:progress[p.id]}),
+                React.createElement("span", {style:{fontSize:11,color:progress[p.id]==="done"?p.color:progress[p.id]==="loading"?"#ff8c42":"#2a5a2a",letterSpacing:1}}, p.label)))),
 
-                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                  {PLATFORMS.map(p=>(
-                    <button key={p.id} onClick={()=>setActive(p.id)} style={{padding:"10px 16px",background:activePlatform===p.id?"rgba(0,40,0,0.8)":"rgba(0,15,0,0.6)",border:`1px solid ${activePlatform===p.id?p.color:"#1a3a1a"}`,borderBottom:activePlatform===p.id?"1px solid #050a05":"1px solid #1a3a1a",color:activePlatform===p.id?p.color:"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:1,cursor:"pointer"}}>
-                      <span style={{marginRight:6}}>{p.icon}</span>{p.label}
-                    </button>
-                  ))}
-                </div>
+            // Results
+            anyDone && React.createElement("div", {className:"fade-in"},
+              React.createElement("div", {style:{display:"flex",gap:4,flexWrap:"wrap"}},
+                PLATFORMS.map(p => React.createElement("button", {key:p.id,onClick:()=>setActive(p.id),disabled:!results[p.id],style:{padding:"10px 16px",background:activePlatform===p.id?"rgba(0,40,0,0.8)":"rgba(0,15,0,0.6)",border:`1px solid ${activePlatform===p.id?p.color:"#1a3a1a"}`,borderBottom:activePlatform===p.id?"1px solid #050a05":"1px solid #1a3a1a",color:activePlatform===p.id?p.color:results[p.id]?"#4a7c4a":"#1a3a1a",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:1,cursor:results[p.id]?"pointer":"not-allowed"}},
+                  p.icon + " " + p.label + (progress[p.id]==="loading"?" …":"") + (progress[p.id]==="done"?" ✓":"")))),
 
-                <div style={{border:`1px solid ${ap?.color||"#1a3a1a"}`,background:"rgba(0,15,0,0.7)",padding:24,position:"relative",minHeight:200}}>
-                  <div style={{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:9,color:ap?.color,letterSpacing:2}}>▸ {ap?.label.toUpperCase()} — {ap?.desc.toUpperCase()}</div>
-                  <pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"'Courier New',monospace",fontSize:13,color:"#d8f8d8",lineHeight:1.7,margin:0}}>{getContent()}</pre>
-                  <div style={{marginTop:20,display:"flex",justifyContent:"flex-end"}}>
-                    <button onClick={copy} style={{padding:"8px 20px",background:copied?"rgba(0,255,80,0.2)":"transparent",border:`1px solid ${copied?"#00ff9d":"#1a4a1a"}`,color:copied?"#00ff9d":"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:2,cursor:"pointer"}}>
-                      {copied?"✓ COPIED TO CLIPBOARD":"▸ COPY POST"}
-                    </button>
-                  </div>
-                </div>
+              React.createElement("div", {style:{border:`1px solid ${ap?.color||"#1a3a1a"}`,background:"rgba(0,15,0,0.7)",padding:24,position:"relative",minHeight:200}},
+                React.createElement("div", {style:{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:9,color:ap?.color,letterSpacing:2}},
+                  "▸ " + (ap?.label||"").toUpperCase() + " — " + (ap?.desc||"").toUpperCase()),
+                results[activePlatform]
+                  ? React.createElement("pre", {style:{whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"'Courier New',monospace",fontSize:13,color:"#d8f8d8",lineHeight:1.7,margin:0}}, getContent())
+                  : React.createElement("div", {style:{color:"#2a5a2a",fontSize:12,marginTop:8},className:"pulsing"}, "▸ Generating..."),
+                results[activePlatform] && React.createElement("div", {style:{marginTop:20,display:"flex",justifyContent:"flex-end"}},
+                  React.createElement("button", {onClick:copy,style:{padding:"8px 20px",background:copied?"rgba(0,255,80,0.2)":"transparent",border:`1px solid ${copied?"#00ff9d":"#1a4a1a"}`,color:copied?"#00ff9d":"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:2,cursor:"pointer"}},
+                    copied?"✓ COPIED TO CLIPBOARD":"▸ COPY POST"))),
 
-                <div style={{marginTop:16}}>
-                  <div style={{fontSize:9,color:"#2a5a2a",letterSpacing:3,marginBottom:10}}>▸ ALL PLATFORM OUTPUTS</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    {PLATFORMS.map(p=>(
-                      <div key={p.id} onClick={()=>setActive(p.id)} style={{border:"1px solid #0f2a0f",background:activePlatform===p.id?"rgba(0,30,0,0.8)":"rgba(0,10,0,0.4)",padding:"12px 14px",cursor:"pointer"}}>
-                        <div style={{fontSize:10,color:p.color,letterSpacing:1,marginBottom:4}}>{p.icon} {p.label}</div>
-                        <div style={{fontSize:11,color:"#4a6a4a",lineHeight:1.4,overflow:"hidden",maxHeight:44}}>{(results[p.id]||"—").slice(0,80)}…</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
+              React.createElement("div", {style:{marginTop:16}},
+                React.createElement("div", {style:{fontSize:9,color:"#2a5a2a",letterSpacing:3,marginBottom:10}}, "▸ ALL PLATFORM OUTPUTS"),
+                React.createElement("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+                  PLATFORMS.map(p => React.createElement("div", {key:p.id,onClick:()=>results[p.id]&&setActive(p.id),style:{border:"1px solid #0f2a0f",background:activePlatform===p.id?"rgba(0,30,0,0.8)":"rgba(0,10,0,0.4)",padding:"12px 14px",cursor:results[p.id]?"pointer":"default"}},
+                    React.createElement("div", {style:{fontSize:10,color:results[p.id]?p.color:"#1a3a1a",letterSpacing:1,marginBottom:4,display:"flex",justifyContent:"space-between"}},
+                      p.icon + " " + p.label,
+                      React.createElement(StatusDot, {s:progress[p.id]})),
+                    React.createElement("div", {style:{fontSize:11,color:"#4a6a4a",lineHeight:1.4,overflow:"hidden",maxHeight:44}},
+                      results[p.id] ? results[p.id].slice(0,80)+"…" : React.createElement("span",{style:{color:"#1a3a1a"}},"Pending..."))))
+                ))
+            ),
 
-            <div style={{marginTop:32,textAlign:"center",fontSize:9,color:"#1a3a1a",letterSpacing:3}}>
-              UJASUSI VIRAL OPS v2.1 ▸ POWERED BY CLAUDE AI ▸ ujasusiblog.com
-            </div>
-          </div>
-        </div>
+            React.createElement("div", {style:{marginTop:32,textAlign:"center",fontSize:9,color:"#1a3a1a",letterSpacing:3}},
+              "UJASUSI VIRAL OPS v3.0 ▸ POWERED BY CLAUDE AI ▸ ujasusiblog.com")
+          )
+        )
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
   </script>
 </body>
 </html>
