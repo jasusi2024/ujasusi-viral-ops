@@ -32,40 +32,49 @@
       { id:"whatsapp", label:"WhatsApp Broadcast",   icon:"W",  color:"#a8d8a8", desc:"Bilingual English/Swahili broadcast" },
     ];
 
-    const SYSTEM_PROMPT = `You are a specialist social media strategist for Ujasusi Blog — a premier intelligence analysis newsletter covering African security affairs, espionage, intelligence services, and geopolitics, run by a former Tanzania Intelligence and Security Service (TISS) officer.
+    const SYSTEM_PROMPT = `You are a social media strategist for Ujasusi Blog, an intelligence analysis newsletter on African security affairs run by a former Tanzania Intelligence and Security Service (TISS) officer. Be concise — total JSON response must be under 1500 tokens.
 
-Your task: Transform the provided article content into viral, platform-specific social media posts.
+Generate four platform posts. Rules:
+- twitter: Hook tweet + 3 follow-up tweets (2/ 3/ 4/) + subscribe CTA. Each tweet max 220 chars. Separate with ---
+- linkedin: 2 short paragraphs + 3 bullet takeaways + 1 closing question + hashtags. Max 200 words.
+- substack: 2 sentences only. Curiosity gap. End with "Read the full brief →"
+- whatsapp: 3 lines English then 3 lines Swahili. Emojis. Max 100 words total.
 
-UJASUSI BLOG BRAND VOICE:
-- Authoritative, insider-sounding, analytical
-- Urgent but measured — like a declassified brief
-- Appeals to: policy professionals, journalists, academics, security enthusiasts, Tanzanian diaspora, East Africa watchers
-- Hashtags: #Ujasusi #AfricanIntelligence #EastAfrica #Tanzania #Espionage #OSINT #SecurityAfrica #Intelligence
+Lead with intelligence angle. Use specific agency names, countries, operations from the article. Hashtags: #Ujasusi #AfricanIntelligence #Tanzania #OSINT
 
-PLATFORM RULES:
-- X/Twitter Thread: Hook tweet (max 280 chars) + 4-6 numbered follow-up tweets (2/, 3/ etc.) + CTA to subscribe. Emojis. Each tweet separated by "---"
-- LinkedIn Post: Bold opening + short paragraphs + 3 analytical takeaways + thought-provoking question + hashtags.
-- Substack Note: 2-3 punchy sentences. Curiosity gap. Ends with "Read the full brief →"
-- WhatsApp Broadcast: English then Swahili. Informal but credible. Brief summary + link prompt. Emojis.
+Return ONLY this JSON with no extra text or markdown:
+{"twitter":"t1---t2---t3---t4","linkedin":"text","substack":"text","whatsapp":"text","suggested_hashtags":["tag1","tag2","tag3"],"viral_score":82,"hook_analysis":"one sentence"}`;
 
-Always lead with the intelligence angle. Reference specific countries, agencies, or operations. Never be vague when you can be specific.
-
-Respond ONLY with a valid JSON object, no markdown fences:
-{"twitter":"tweet1---tweet2---tweet3","linkedin":"text","substack":"text","whatsapp":"text","suggested_hashtags":["tag1","tag2"],"viral_score":85,"hook_analysis":"One sentence explaining why this will perform well"}`;
+    // Attempt to repair truncated JSON by closing open strings/objects
+    function repairJSON(str) {
+      let s = str.replace(/```json|```/g, "").trim();
+      // If it ends mid-string, close the string then close remaining braces
+      const openBraces = (s.match(/{/g)||[]).length - (s.match(/}/g)||[]).length;
+      const openBrackets = (s.match(/\[/g)||[]).length - (s.match(/\]/g)||[]).length;
+      // Find last complete key-value pair and truncate there
+      const lastComma = s.lastIndexOf(",");
+      const lastBrace = s.lastIndexOf("}");
+      if (lastComma > lastBrace) {
+        s = s.substring(0, lastComma);
+      }
+      for (let i = 0; i < openBrackets; i++) s += "]";
+      for (let i = 0; i < openBraces; i++) s += "}";
+      return s;
+    }
 
     function App() {
-      const [apiKey, setApiKey]           = useState(() => sessionStorage.getItem("uj_key") || "");
-      const [showKey, setShowKey]         = useState(false);
-      const [keyOk, setKeyOk]             = useState(() => !!sessionStorage.getItem("uj_key"));
-      const [title, setTitle]             = useState("");
-      const [content, setContent]         = useState("");
-      const [loading, setLoading]         = useState(false);
-      const [results, setResults]         = useState(null);
-      const [activePlatform, setActive]   = useState("twitter");
-      const [copied, setCopied]           = useState(false);
-      const [error, setError]             = useState(null);
-      const [scanLine, setScanLine]       = useState(0);
-      const [glitch, setGlitch]           = useState(false);
+      const [apiKey, setApiKey]         = useState(() => sessionStorage.getItem("uj_key") || "");
+      const [showKey, setShowKey]       = useState(false);
+      const [keyOk, setKeyOk]           = useState(() => !!sessionStorage.getItem("uj_key"));
+      const [title, setTitle]           = useState("");
+      const [content, setContent]       = useState("");
+      const [loading, setLoading]       = useState(false);
+      const [results, setResults]       = useState(null);
+      const [activePlatform, setActive] = useState("twitter");
+      const [copied, setCopied]         = useState(false);
+      const [error, setError]           = useState(null);
+      const [scanLine, setScanLine]     = useState(0);
+      const [glitch, setGlitch]         = useState(false);
 
       useEffect(() => {
         const t = setInterval(() => setScanLine(p => (p+1)%100), 50);
@@ -100,16 +109,26 @@ Respond ONLY with a valid JSON object, no markdown fences:
               "anthropic-dangerous-direct-browser-access": "true",
             },
             body: JSON.stringify({
-              model: "claude-opus-4-5",
-              max_tokens: 4000,
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 2000,
               system: SYSTEM_PROMPT,
-              messages: [{ role:"user", content:`ARTICLE TITLE: ${title||"Untitled"}\n\nARTICLE CONTENT:\n${content}\n\nGenerate viral social media posts for all four platforms.` }],
+              messages: [{ role:"user", content:`TITLE: ${title||"Untitled"}\n\nCONTENT:\n${content.slice(0,3000)}\n\nGenerate posts for all four platforms now.` }],
             }),
           });
           if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message||`HTTP ${res.status}`); }
           const data = await res.json();
-          const raw  = data.content?.find(b=>b.type==="text")?.text||"";
-          const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+          const raw = data.content?.find(b=>b.type==="text")?.text||"";
+          let parsed;
+          try {
+            parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+          } catch(e1) {
+            // Try to repair truncated JSON
+            try {
+              parsed = JSON.parse(repairJSON(raw));
+            } catch(e2) {
+              throw new Error("Response parsing failed. Try with shorter article content.");
+            }
+          }
           setResults(parsed); setActive("twitter");
         } catch(e) {
           setError("SIGNAL LOST — " + e.message);
@@ -133,9 +152,7 @@ Respond ONLY with a valid JSON object, no markdown fences:
 
       return (
         <div style={{minHeight:"100vh",position:"relative",overflow:"hidden"}}>
-          {/* scanline */}
           <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:50,background:`linear-gradient(transparent ${scanLine}%, rgba(0,255,80,0.015) ${scanLine+1}%, transparent ${scanLine+2}%)`}}/>
-          {/* grid */}
           <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:0,backgroundImage:"linear-gradient(rgba(0,255,80,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,80,0.03) 1px,transparent 1px)",backgroundSize:"40px 40px"}}/>
 
           <div style={{position:"relative",zIndex:10,maxWidth:900,margin:"0 auto",padding:"24px 20px"}}>
@@ -149,7 +166,7 @@ Respond ONLY with a valid JSON object, no markdown fences:
                 UJASUSI<span style={{color:"#00ff9d"}}>:</span>VIRAL_OPS
               </div>
               <div style={{fontSize:11,color:"#4a7c4a",letterSpacing:3,marginTop:4}}>
-                INTELLIGENCE CONTENT AMPLIFICATION SYSTEM v2.0
+                INTELLIGENCE CONTENT AMPLIFICATION SYSTEM v2.1
               </div>
             </div>
 
@@ -187,9 +204,9 @@ Respond ONLY with a valid JSON object, no markdown fences:
                 <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Tanzania TISS Conducts Covert Operations Against Opposition..." style={inp}/>
               </div>
               <div style={{marginBottom:16}}>
-                <div style={{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}>ARTICLE CONTENT:</div>
-                <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Paste your Ujasusi Blog article here. Include agency names, operations, countries, and analytical conclusions for the sharpest output..." rows={8} style={{...inp,resize:"vertical",lineHeight:1.6}}/>
-                <div style={{fontSize:10,color:"#2a5a2a",marginTop:4,textAlign:"right"}}>{content.length} chars</div>
+                <div style={{fontSize:10,color:"#4a7c4a",letterSpacing:2,marginBottom:6}}>ARTICLE CONTENT <span style={{color:"#2a5a2a"}}>(first 3,000 chars used)</span>:</div>
+                <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Paste your Ujasusi Blog article here. Include agency names, operations, countries, and analytical conclusions..." rows={8} style={{...inp,resize:"vertical",lineHeight:1.6}}/>
+                <div style={{fontSize:10,color:content.length>3000?"#ff8c42":"#2a5a2a",marginTop:4,textAlign:"right"}}>{content.length} chars {content.length>3000&&"— will be trimmed to 3,000"}</div>
               </div>
               <button onClick={generate} disabled={loading||!content.trim()||!keyOk} style={{width:"100%",padding:"14px",background:loading?"transparent":"rgba(0,255,80,0.1)",border:`1px solid ${loading||!keyOk?"#1a4a1a":"#00ff9d"}`,color:loading||!keyOk?"#2a6a2a":"#00ff9d",fontFamily:"'Courier New',monospace",fontSize:13,letterSpacing:3,cursor:loading||!keyOk?"not-allowed":"pointer",textTransform:"uppercase"}}>
                 <span className={loading?"pulsing":""}>{loading?"▸ PROCESSING INTELLIGENCE...":!keyOk?"▸ AUTHORISE API KEY FIRST":"▸ GENERATE VIRAL POSTS"}</span>
@@ -200,20 +217,19 @@ Respond ONLY with a valid JSON object, no markdown fences:
             {/* Results */}
             {results&&(
               <div className="fade-in">
-                {/* Score bar */}
                 <div style={{border:"1px solid #1a3a1a",background:"rgba(0,20,0,0.6)",padding:"16px 20px",marginBottom:16,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
                   <div>
                     <div style={{fontSize:9,color:"#4a7c4a",letterSpacing:2,marginBottom:4}}>VIRAL POTENTIAL SCORE</div>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <div style={{width:160,height:6,background:"#0a1a0a",border:"1px solid #1a3a1a",borderRadius:3}}>
-                        <div style={{width:`${results.viral_score}%`,height:"100%",background:results.viral_score>75?"#00ff9d":results.viral_score>50?"#ff8c42":"#ff4444",borderRadius:3,boxShadow:`0 0 8px ${results.viral_score>75?"#00ff9d":"#ff8c42"}`}}/>
+                        <div style={{width:`${results.viral_score||75}%`,height:"100%",background:results.viral_score>75?"#00ff9d":results.viral_score>50?"#ff8c42":"#ff4444",borderRadius:3,transition:"width 1s ease"}}/>
                       </div>
-                      <span style={{color:"#00ff9d",fontSize:18,fontWeight:700}}>{results.viral_score}</span>
+                      <span style={{color:"#00ff9d",fontSize:18,fontWeight:700}}>{results.viral_score||"—"}</span>
                     </div>
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:9,color:"#4a7c4a",letterSpacing:2,marginBottom:4}}>SIGNAL ANALYSIS</div>
-                    <div style={{fontSize:12,color:"#a8e6a8",lineHeight:1.4}}>{results.hook_analysis}</div>
+                    <div style={{fontSize:12,color:"#a8e6a8",lineHeight:1.4}}>{results.hook_analysis||"Analysis unavailable"}</div>
                   </div>
                   {results.suggested_hashtags?.length>0&&(
                     <div>
@@ -227,7 +243,6 @@ Respond ONLY with a valid JSON object, no markdown fences:
                   )}
                 </div>
 
-                {/* Tabs */}
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                   {PLATFORMS.map(p=>(
                     <button key={p.id} onClick={()=>setActive(p.id)} style={{padding:"10px 16px",background:activePlatform===p.id?"rgba(0,40,0,0.8)":"rgba(0,15,0,0.6)",border:`1px solid ${activePlatform===p.id?p.color:"#1a3a1a"}`,borderBottom:activePlatform===p.id?"1px solid #050a05":"1px solid #1a3a1a",color:activePlatform===p.id?p.color:"#4a7c4a",fontFamily:"'Courier New',monospace",fontSize:11,letterSpacing:1,cursor:"pointer"}}>
@@ -236,7 +251,6 @@ Respond ONLY with a valid JSON object, no markdown fences:
                   ))}
                 </div>
 
-                {/* Content */}
                 <div style={{border:`1px solid ${ap?.color||"#1a3a1a"}`,background:"rgba(0,15,0,0.7)",padding:24,position:"relative",minHeight:200}}>
                   <div style={{position:"absolute",top:-1,left:20,background:"#050a05",padding:"0 8px",fontSize:9,color:ap?.color,letterSpacing:2}}>▸ {ap?.label.toUpperCase()} — {ap?.desc.toUpperCase()}</div>
                   <pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"'Courier New',monospace",fontSize:13,color:"#d8f8d8",lineHeight:1.7,margin:0}}>{getContent()}</pre>
@@ -247,14 +261,13 @@ Respond ONLY with a valid JSON object, no markdown fences:
                   </div>
                 </div>
 
-                {/* Grid preview */}
                 <div style={{marginTop:16}}>
                   <div style={{fontSize:9,color:"#2a5a2a",letterSpacing:3,marginBottom:10}}>▸ ALL PLATFORM OUTPUTS</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     {PLATFORMS.map(p=>(
                       <div key={p.id} onClick={()=>setActive(p.id)} style={{border:"1px solid #0f2a0f",background:activePlatform===p.id?"rgba(0,30,0,0.8)":"rgba(0,10,0,0.4)",padding:"12px 14px",cursor:"pointer"}}>
                         <div style={{fontSize:10,color:p.color,letterSpacing:1,marginBottom:4}}>{p.icon} {p.label}</div>
-                        <div style={{fontSize:11,color:"#4a6a4a",lineHeight:1.4,overflow:"hidden",maxHeight:44}}>{(results[p.id]||"").slice(0,80)}…</div>
+                        <div style={{fontSize:11,color:"#4a6a4a",lineHeight:1.4,overflow:"hidden",maxHeight:44}}>{(results[p.id]||"—").slice(0,80)}…</div>
                       </div>
                     ))}
                   </div>
@@ -263,7 +276,7 @@ Respond ONLY with a valid JSON object, no markdown fences:
             )}
 
             <div style={{marginTop:32,textAlign:"center",fontSize:9,color:"#1a3a1a",letterSpacing:3}}>
-              UJASUSI VIRAL OPS ▸ POWERED BY CLAUDE AI ▸ ujasusiblog.com
+              UJASUSI VIRAL OPS v2.1 ▸ POWERED BY CLAUDE AI ▸ ujasusiblog.com
             </div>
           </div>
         </div>
@@ -274,5 +287,3 @@ Respond ONLY with a valid JSON object, no markdown fences:
   </script>
 </body>
 </html>
-Creating a viral notes platform for Ujasusi Blog - Claude
-
